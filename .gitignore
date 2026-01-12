@@ -1,2 +1,3 @@
-.mp4
-.png
+*.mp4
+*.png
+venv/
