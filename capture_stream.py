@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Minimalistischer HTTP-Server für WLAN-Paket-Streaming.
-Verwendet nur Python stdlib - keine externen Dependencies!
+Minimalist HTTP server for WLAN packet streaming.
+Uses only Python stdlib - no external dependencies!
 
-tcpdump läuft permanent im Hintergrund und schreibt auf stdout.
-Dieser Server streamt gefilterte PCAP-Daten live über HTTP.
+tcpdump runs permanently in the background and writes to stdout.
+This server streams filtered PCAP data live via HTTP.
 
-Verwendung:
-    # Terminal 1: tcpdump starten (als root/sudo)
+Usage:
+    # Terminal 1: Start tcpdump (as root/sudo)
     sudo tcpdump -i wlan0mon -w - -U | python3 capture_stream.py
     
-    # Oder mit Named Pipe:
+    # Or with Named Pipe:
     mkfifo /tmp/tcpdump_fifo
     sudo tcpdump -i wlan0mon -w - -U > /tmp/tcpdump_fifo &
     python3 capture_stream.py --input /tmp/tcpdump_fifo
@@ -28,17 +28,17 @@ from urllib.parse import urlparse, parse_qs
 import threading
 import os
 
-# Konfiguration
+# Configuration
 DEFAULT_PORT = 8000
 DEFAULT_INPUT = "/tmp/tcpdump_fifo"  # Named Pipe
 CHUNK_SIZE = 8192
 
 
 class StreamHandler(BaseHTTPRequestHandler):
-    """HTTP Request Handler für PCAP-Streaming."""
+    """HTTP Request Handler for PCAP streaming."""
     
     def log_message(self, format, *args):
-        """Log mit Zeitstempel."""
+        """Log with timestamp."""
         sys.stderr.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {format % args}\n")
     
     def do_GET(self):
@@ -50,10 +50,10 @@ class StreamHandler(BaseHTTPRequestHandler):
         elif parsed_url.path == '/stream':
             self.handle_stream(parsed_url.query)
         else:
-            self.send_error(404, "Nicht gefunden")
+            self.send_error(404, "Not found")
     
     def send_info_page(self):
-        """Sendet eine einfache Info-Seite."""
+        """Sends a simple info page."""
         html = """<!DOCTYPE html>
 <html>
 <head>
@@ -67,30 +67,30 @@ class StreamHandler(BaseHTTPRequestHandler):
 </head>
 <body>
     <h1>WLAN Packet Capture Stream API</h1>
-    <p>Server läuft und empfängt Pakete von tcpdump.</p>
+    <p>Server is running and receiving packets from tcpdump.</p>
     
-    <h2>API Endpunkt</h2>
+    <h2>API Endpoint</h2>
     <p><code>GET /stream?filter=&lt;wireshark_filter&gt;&amp;duration=&lt;seconds&gt;</code></p>
     
-    <h3>Parameter:</h3>
+    <h3>Parameters:</h3>
     <ul>
         <li><strong>filter</strong> (optional): Wireshark Display Filter<br>
-            Beispiel: <code>wlan.fc.type_subtype == 0x000e</code></li>
-        <li><strong>duration</strong> (optional): Dauer in Sekunden (default: unbegrenzt)</li>
+            Example: <code>wlan.fc.type_subtype == 0x000e</code></li>
+        <li><strong>duration</strong> (optional): Duration in seconds (default: unlimited)</li>
     </ul>
     
-    <h3>Beispiele:</h3>
-    <pre># Alle Pakete für 60 Sekunden
+    <h3>Examples:</h3>
+    <pre># All packets for 60 seconds
 curl "http://localhost:8000/stream?duration=60" > capture.pcap
 
-# Nur Action Frames
+# Only Action Frames
 curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e" > filtered.pcap
 
-# Mit Zeitlimit und Filter
+# With time limit and filter
 curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e&duration=30" > capture.pcap</pre>
     
     <h3>Status:</h3>
-    <p>Input-Quelle: <code>{input_source}</code></p>
+    <p>Input source: <code>{input_source}</code></p>
 </body>
 </html>""".format(input_source=self.server.input_source)
         
@@ -101,37 +101,40 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
         self.wfile.write(html.encode())
     
     def handle_stream(self, query_string):
-        """Streamt gefilterte PCAP-Daten."""
-        # Parse Query-Parameter
+        """Streams filtered PCAP data."""
+        # Parse query parameters
         params = parse_qs(query_string)
         filter_expr = params.get('filter', [None])[0]
         duration = params.get('duration', [None])[0]
         
-        self.log_message(f"Stream-Request: filter={filter_expr}, duration={duration}")
+        self.log_message(f"Stream request: filter={filter_expr}, duration={duration}")
         
-        # Validiere duration
+        # Validate duration
         timeout = None
         if duration:
             try:
                 timeout = float(duration)
                 if timeout <= 0:
-                    self.send_error(400, "Duration muss positiv sein")
+                    self.send_error(400, "Duration must be positive")
                     return
             except ValueError:
-                self.send_error(400, "Ungültige Duration")
+                self.send_error(400, "Invalid duration")
                 return
         
-        # Öffne Input-Quelle (Named Pipe oder stdin)
+        # Open input source (Named Pipe or stdin)
+        # IMPORTANT: For Named Pipes we need to reopen them for each request
+        # To keep tcpdump alive, use pipe_buffer.py or tee
         try:
             if self.server.input_source == "stdin":
-                # Lese von stdin (tcpdump wurde via Pipe gestartet)
+                # Read from stdin (tcpdump was started via pipe)
                 input_fd = sys.stdin.buffer
             else:
-                # Lese von Named Pipe
+                # Open Named Pipe for this request
+                # If tcpdump terminates, use pipe_buffer.py or tee
                 input_fd = open(self.server.input_source, 'rb')
         except Exception as e:
-            self.log_message(f"Fehler beim Öffnen der Input-Quelle: {e}")
-            self.send_error(500, f"Kann Input nicht öffnen: {e}")
+            self.log_message(f"Error opening input source: {e}")
+            self.send_error(500, f"Cannot open input: {e}")
             return
         
         try:
@@ -141,66 +144,78 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
             else:
                 self.stream_raw(input_fd, timeout)
         except BrokenPipeError:
-            self.log_message("Client hat Verbindung geschlossen")
+            self.log_message("Client closed connection")
         except Exception as e:
-            self.log_message(f"Fehler beim Streaming: {e}")
+            self.log_message(f"Error during streaming: {e}")
         finally:
+            # Close the pipe FD for this request
             if self.server.input_source != "stdin":
-                input_fd.close()
+                try:
+                    input_fd.close()
+                except:
+                    pass
     
     def stream_raw(self, input_fd, timeout):
-        """Streamt PCAP-Daten ohne Filter."""
+        """Streams PCAP data without filter."""
+        # Collect data first to determine Content-Length
+        # Or use Chunked Encoding for unknown size
+        start_time = time.time()
+        bytes_sent = 0
+        chunks = []
+        
+        # Read data with timeout
+        while True:
+            # Timeout check
+            if timeout and (time.time() - start_time) >= timeout:
+                self.log_message(f"Timeout reached ({timeout}s), ending stream")
+                break
+            
+            # Read chunk
+            chunk = input_fd.read(CHUNK_SIZE)
+            if not chunk:
+                # Check if more data is coming (short pause)
+                time.sleep(0.01)
+                # If timeout reached, end
+                if timeout and (time.time() - start_time) >= timeout:
+                    break
+                continue
+            
+            chunks.append(chunk)
+            bytes_sent += len(chunk)
+        
+        # Send response with all data
+        total_size = sum(len(c) for c in chunks)
         self.send_response(200)
         self.send_header('Content-Type', 'application/vnd.tcpdump.pcap')
         self.send_header('Content-Disposition', 'attachment; filename="capture.pcap"')
-        self.send_header('Transfer-Encoding', 'chunked')
+        self.send_header('Content-Length', str(total_size))
         self.end_headers()
         
-        start_time = time.time()
-        bytes_sent = 0
-        
-        while True:
-            # Timeout-Check
-            if timeout and (time.time() - start_time) >= timeout:
-                self.log_message(f"Timeout erreicht ({timeout}s), beende Stream")
-                break
-            
-            # Lese Chunk
-            chunk = input_fd.read(CHUNK_SIZE)
-            if not chunk:
-                time.sleep(0.01)  # Kurze Pause wenn keine Daten
-                continue
-            
-            # Sende Chunk
-            self.wfile.write(f"{len(chunk):X}\r\n".encode())
+        # Send all chunks
+        for chunk in chunks:
             self.wfile.write(chunk)
-            self.wfile.write(b"\r\n")
-            self.wfile.flush()
-            
-            bytes_sent += len(chunk)
         
-        # End-Chunk
-        self.wfile.write(b"0\r\n\r\n")
-        self.log_message(f"Stream beendet: {bytes_sent} Bytes gesendet")
+        self.wfile.flush()
+        self.log_message(f"Stream ended: {bytes_sent} bytes sent")
     
     def stream_with_filter(self, input_fd, filter_expr, timeout):
-        """Streamt PCAP-Daten mit tshark-Filter."""
-        self.log_message(f"Starte tshark mit Filter: {filter_expr}")
+        """Streams PCAP data with tshark filter."""
+        self.log_message(f"Starting tshark with filter: {filter_expr}")
         
-        # Baue tshark-Kommando
+        # Build tshark command
         cmd = [
             'tshark',
-            '-r', '-',           # Lese von stdin
+            '-r', '-',           # Read from stdin
             '-Y', filter_expr,   # Display Filter
-            '-w', '-',           # Schreibe zu stdout
+            '-w', '-',           # Write to stdout
         ]
         
-        # Füge Zeitlimit hinzu (tshark -a duration:X)
+        # Add time limit (tshark -a duration:X)
         if timeout:
             cmd.extend(['-a', f'duration:{int(timeout)}'])
         
         try:
-            # Starte tshark-Prozess
+            # Start tshark process
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -208,14 +223,14 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
                 stderr=subprocess.PIPE
             )
             
-            # HTTP Response Headers senden
+            # Send HTTP response headers
             self.send_response(200)
             self.send_header('Content-Type', 'application/vnd.tcpdump.pcap')
             self.send_header('Content-Disposition', 'attachment; filename="filtered_capture.pcap"')
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
             
-            # Thread zum Füttern von tshark mit Daten
+            # Thread to feed tshark with data
             def feed_tshark():
                 try:
                     while True:
@@ -236,27 +251,27 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
             feeder = threading.Thread(target=feed_tshark, daemon=True)
             feeder.start()
             
-            # Lese gefilterte Ausgabe von tshark und streame zu Client
+            # Read filtered output from tshark and stream to client
             start_time = time.time()
             bytes_sent = 0
             
             while True:
-                # Timeout-Check
+                # Timeout check
                 if timeout and (time.time() - start_time) >= timeout:
                     proc.terminate()
                     break
                 
-                # Prüfe ob tshark noch läuft
+                # Check if tshark is still running
                 if proc.poll() is not None:
                     break
                 
-                # Lese Chunk von tshark
+                # Read chunk from tshark
                 chunk = proc.stdout.read(CHUNK_SIZE)
                 if not chunk:
                     time.sleep(0.01)
                     continue
                 
-                # Sende Chunk zum Client
+                # Send chunk to client
                 self.wfile.write(f"{len(chunk):X}\r\n".encode())
                 self.wfile.write(chunk)
                 self.wfile.write(b"\r\n")
@@ -264,31 +279,31 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
                 
                 bytes_sent += len(chunk)
             
-            # End-Chunk
+            # End chunk
             self.wfile.write(b"0\r\n\r\n")
             
-            # Warte auf tshark
+            # Wait for tshark
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
             
-            self.log_message(f"Stream beendet: {bytes_sent} Bytes gesendet (gefiltert)")
+            self.log_message(f"Stream ended: {bytes_sent} bytes sent (filtered)")
             
-            # Zeige tshark stderr (Fehler/Warnungen)
+            # Show tshark stderr (errors/warnings)
             stderr = proc.stderr.read().decode('utf-8', errors='ignore')
             if stderr:
                 self.log_message(f"tshark stderr: {stderr}")
         
         except FileNotFoundError:
-            self.send_error(500, "tshark nicht gefunden. Bitte installieren: sudo apt-get install tshark")
+            self.send_error(500, "tshark not found. Please install: sudo apt-get install tshark")
         except Exception as e:
-            self.log_message(f"Fehler bei tshark: {e}")
-            self.send_error(500, f"Fehler beim Filtern: {e}")
+            self.log_message(f"Error with tshark: {e}")
+            self.send_error(500, f"Error during filtering: {e}")
 
 
 class StreamingServer(HTTPServer):
-    """HTTP Server mit Input-Source-Tracking."""
+    """HTTP Server with input source tracking."""
     
     def __init__(self, server_address, RequestHandlerClass, input_source):
         super().__init__(server_address, RequestHandlerClass)
@@ -300,47 +315,46 @@ def main():
     
     parser = argparse.ArgumentParser(description='WLAN Packet Capture Streaming Server')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT,
-                       help=f'Server-Port (default: {DEFAULT_PORT})')
+                       help=f'Server port (default: {DEFAULT_PORT})')
     parser.add_argument('--input', default=DEFAULT_INPUT,
-                       help=f'Input-Quelle: Named Pipe oder "stdin" (default: {DEFAULT_INPUT})')
+                       help=f'Input source: Named Pipe or "stdin" (default: {DEFAULT_INPUT})')
     parser.add_argument('--host', default='0.0.0.0',
-                       help='Server-Host (default: 0.0.0.0)')
+                       help='Server host (default: 0.0.0.0)')
     
     args = parser.parse_args()
     
-    # Prüfe ob Input-Quelle existiert (außer bei stdin)
+    # Check if input source exists (except for stdin)
     if args.input != "stdin" and not os.path.exists(args.input):
-        print(f"Warnung: Input-Quelle '{args.input}' existiert nicht!", file=sys.stderr)
-        print(f"Erstelle Named Pipe...", file=sys.stderr)
+        print(f"Warning: Input source '{args.input}' does not exist!", file=sys.stderr)
+        print(f"Creating Named Pipe...", file=sys.stderr)
         try:
             os.mkfifo(args.input)
-            print(f"Named Pipe erstellt: {args.input}", file=sys.stderr)
-            print(f"Starte tcpdump mit: sudo tcpdump -i wlan0mon -w - -U > {args.input} &", file=sys.stderr)
+            print(f"Named Pipe created: {args.input}", file=sys.stderr)
+            print(f"Start tcpdump with: sudo tcpdump -i wlan0mon -w - -U > {args.input} &", file=sys.stderr)
         except Exception as e:
-            print(f"Fehler beim Erstellen der Named Pipe: {e}", file=sys.stderr)
+            print(f"Error creating Named Pipe: {e}", file=sys.stderr)
             sys.exit(1)
     
-    # Starte Server
+    # Start server
     server = StreamingServer((args.host, args.port), StreamHandler, args.input)
     
     print(f"WLAN Packet Capture Streaming Server", file=sys.stderr)
     print(f"=" * 50, file=sys.stderr)
-    print(f"Server läuft auf: http://{args.host}:{args.port}", file=sys.stderr)
-    print(f"Input-Quelle: {args.input}", file=sys.stderr)
+    print(f"Server running on: http://{args.host}:{args.port}", file=sys.stderr)
+    print(f"Input source: {args.input}", file=sys.stderr)
     print(f"", file=sys.stderr)
-    print(f"API-Endpunkt: /stream?filter=<filter>&duration=<seconds>", file=sys.stderr)
-    print(f"Info-Seite: http://{args.host}:{args.port}/", file=sys.stderr)
+    print(f"API endpoint: /stream?filter=<filter>&duration=<seconds>", file=sys.stderr)
+    print(f"Info page: http://{args.host}:{args.port}/", file=sys.stderr)
     print(f"", file=sys.stderr)
-    print(f"Beispiel:", file=sys.stderr)
+    print(f"Example:", file=sys.stderr)
     print(f'  curl "http://localhost:{args.port}/stream?duration=10" > capture.pcap', file=sys.stderr)
     print(f"", file=sys.stderr)
-    print(f"Drücke Ctrl+C zum Beenden", file=sys.stderr)
+    print(f"Press Ctrl+C to stop", file=sys.stderr)
     print(f"=" * 50, file=sys.stderr)
     
-    # Signal-Handler für sauberes Beenden
+    # Signal handler for clean shutdown
     def signal_handler(sig, frame):
-        print("\nServer wird beendet...", file=sys.stderr)
-        shutdown_flag.set()
+        print("\nStopping server...", file=sys.stderr)
         server.shutdown()
         server.server_close()
     
@@ -348,14 +362,14 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     try:
-        # serve_forever mit poll_interval, damit shutdown() schnell erkannt wird
+        # serve_forever with poll_interval so shutdown() is quickly recognized
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
-        print("\nServer wird beendet...", file=sys.stderr)
+        print("\nStopping server...", file=sys.stderr)
         server.shutdown()
         server.server_close()
     finally:
-        print("Server beendet.", file=sys.stderr)
+        print("Server stopped.", file=sys.stderr)
 
 
 if __name__ == '__main__':

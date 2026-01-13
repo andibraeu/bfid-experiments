@@ -67,14 +67,30 @@ ssh pi@raspberrypi.local "chmod +x ~/start_capture.sh ~/capture_stream.py"
 
 ## Usage
 
-### Option 1: With Named Pipe (recommended)
+### Option 1: With Named Pipe and Buffer Process (recommended)
+
+**Important:** Named Pipes only allow one reader at a time. To prevent tcpdump from terminating when no client is reading, use the `pipe_buffer.py` process.
 
 ```bash
 # Terminal 1: Start tcpdump (as root)
-sudo ./start_capture.sh wlan0mon
+sudo tcpdump -i wlan0mon -w - -U > /tmp/tcpdump_fifo &
+
+# Terminal 2: Start buffer process (keeps pipe open)
+python3 pipe_buffer.py /tmp/tcpdump_fifo /tmp/tcpdump_buffer.fifo
+
+# Terminal 3: Start HTTP server (as regular user)
+python3 capture_stream.py --input /tmp/tcpdump_buffer.fifo --port 8000
+```
+
+**Alternative:** Use `tee` to duplicate the pipe (allows multiple readers):
+
+```bash
+# Terminal 1: Start tcpdump with tee (as root)
+mkfifo /tmp/tcpdump_fifo /tmp/tcpdump_fifo1
+sudo tcpdump -i wlan0mon -w - -U | tee /tmp/tcpdump_fifo1 > /tmp/tcpdump_fifo &
 
 # Terminal 2: Start HTTP server (as regular user)
-python3 capture_stream.py --input /tmp/tcpdump_fifo --port 8000
+python3 capture_stream.py --input /tmp/tcpdump_fifo1 --port 8000
 ```
 
 ### Option 2: With Direct Pipe
