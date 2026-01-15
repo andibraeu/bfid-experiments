@@ -214,6 +214,12 @@ The notebook provides several types of visualizations:
    - Frame-level aggregations
    - Subcarrier-specific analysis
 
+**5. Spatial 2D Visualization and Animation**
+   - 2D scatter plots showing subcarriers as points in Phi/Psi space
+   - Animated visualization over time (1 frame = 1 second in video)
+   - Video export as MP4 to detect movements in space
+   - Alternative views: Phi[0] vs Phi[1], Phi[0] vs Psi[0]
+
 #### Interpreting the Visualizations
 
 - **Time Series**: Show how beamforming angles evolve over time. Look for patterns, trends, or sudden changes that might indicate movement or channel variations.
@@ -224,13 +230,47 @@ The notebook provides several types of visualizations:
 
 - **Change Rates**: Indicate how quickly the beamforming parameters adapt. High change rates might indicate rapid movement or channel fluctuations.
 
+- **Spatial 2D Animation**: Shows subcarriers as points moving in 2D space (Phi/Psi coordinates). Movement patterns can indicate physical movement in the environment. Each frame in the data corresponds to 1 second in the video, allowing direct time correlation.
+
 #### Export Options
 
-The notebook includes commented code for exporting:
+The notebook includes code for exporting:
 - Aggregated statistics to CSV
 - Visualizations as PNG/PDF files
+- **Animated videos as MP4** (requires ffmpeg)
 
-Uncomment the relevant sections in the notebook to enable exports.
+#### Video Animation Requirements
+
+To export animated videos, you need `ffmpeg` installed on your system:
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get install ffmpeg
+```
+
+**Linux (Arch):**
+```bash
+sudo pacman -S ffmpeg
+```
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Windows:**
+Download from [ffmpeg.org](https://ffmpeg.org/download.html) or use:
+```bash
+choco install ffmpeg
+```
+
+The animation creates MP4 videos where:
+- Each data frame = 1 second in the video (1 FPS)
+- Subcarriers are shown as colored points in 2D space
+- Movement patterns can reveal physical movement in the environment
+- Videos are saved as `beamforming_animation_phi_phi.mp4` and `beamforming_animation_phi_psi.mp4`
+
+**Note**: Video export can take several minutes for large datasets. The notebook will check for ffmpeg availability and provide warnings if it's not installed.
 
 ## Limitations
 
@@ -251,8 +291,14 @@ Uncomment the relevant sections in the notebook to enable exports.
 
 ### Missing dependencies
 ```bash
-pip install pandas pyarrow
+pip install pandas pyarrow matplotlib seaborn jupyter
 ```
+
+### Video export not working
+- Ensure `ffmpeg` is installed and available in PATH
+- Check with: `ffmpeg -version`
+- The notebook will detect if ffmpeg is missing and show a warning
+- For large datasets, video export can take a long time - be patient
 
 ## License
 
