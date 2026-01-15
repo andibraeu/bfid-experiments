@@ -105,20 +105,33 @@ def writer_thread(output_pipe, ringbuffer, stop_event):
         os.mkfifo(output_pipe)
         print(f"Writer thread: Output pipe created: {output_pipe}", file=sys.stderr)
     
-    try:
-        with open(output_pipe, 'wb') as f:
-            print(f"Writer thread: Output pipe opened, writing data...", file=sys.stderr)
-            while not stop_event.is_set():
-                if ringbuffer.available() > 0:
-                    chunk = ringbuffer.read(CHUNK_SIZE)
-                    if chunk:
-                        f.write(chunk)
-                        f.flush()
-                else:
-                    time.sleep(0.01)
-    except Exception as e:
-        print(f"Writer thread error: {e}", file=sys.stderr)
-        stop_event.set()
+    # Keep trying to write - if no reader, wait and retry
+    while not stop_event.is_set():
+        try:
+            with open(output_pipe, 'wb') as f:
+                print(f"Writer thread: Output pipe opened, writing data...", file=sys.stderr)
+                while not stop_event.is_set():
+                    if ringbuffer.available() > 0:
+                        chunk = ringbuffer.read(CHUNK_SIZE)
+                        if chunk:
+                            try:
+                                f.write(chunk)
+                                f.flush()
+                            except BrokenPipeError:
+                                # Reader closed the pipe - wait and reopen
+                                print(f"Writer thread: Broken pipe (no reader), waiting...", file=sys.stderr)
+                                break  # Exit inner loop, reopen pipe
+                    else:
+                        time.sleep(0.01)
+        except BrokenPipeError:
+            # Broken pipe - wait a bit and retry
+            print(f"Writer thread: Broken pipe, waiting 1 second...", file=sys.stderr)
+            time.sleep(1)
+            continue
+        except Exception as e:
+            print(f"Writer thread error: {e}", file=sys.stderr)
+            time.sleep(1)  # Wait a bit before retry
+            continue
 
 
 def main():

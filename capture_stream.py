@@ -122,15 +122,16 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
                 return
         
         # Open input source (Named Pipe or stdin)
-        # IMPORTANT: For Named Pipes we need to reopen them for each request
-        # To keep tcpdump alive, use pipe_buffer.py or tee
+        # The continuous reader thread keeps the pipe open, so we can open it for reading
         try:
             if self.server.input_source == "stdin":
                 # Read from stdin (tcpdump was started via pipe)
                 input_fd = sys.stdin.buffer
             else:
                 # Open Named Pipe for this request
-                # If tcpdump terminates, use pipe_buffer.py or tee
+                # The continuous reader keeps it alive, but we need our own FD to read
+                # Note: Named Pipes allow only one reader at a time, so the continuous
+                # reader will block while we read. That's fine - it keeps tcpdump alive.
                 input_fd = open(self.server.input_source, 'rb')
         except Exception as e:
             self.log_message(f"Error opening input source: {e}")
@@ -303,11 +304,54 @@ curl "http://localhost:8000/stream?filter=wlan.fc.type_subtype%20%3D%3D%200x000e
 
 
 class StreamingServer(HTTPServer):
-    """HTTP Server with input source tracking."""
+    """HTTP Server with input source tracking and continuous reader."""
     
     def __init__(self, server_address, RequestHandlerClass, input_source):
         super().__init__(server_address, RequestHandlerClass)
         self.input_source = input_source
+        self.reader_thread = None
+        self.reader_running = False
+        
+        # Start continuous reader thread (only for Named Pipes)
+        # This keeps the pipe open and discards data until a request comes
+        if input_source != "stdin":
+            self.start_continuous_reader()
+    
+    def start_continuous_reader(self):
+        """Starts a thread that keeps the Named Pipe open and discards data."""
+        self.reader_running = True
+        
+        def reader_loop():
+            while self.reader_running:
+                try:
+                    # Open pipe and keep it open - this prevents tcpdump from terminating
+                    with open(self.input_source, 'rb') as pipe:
+                        print(f"Continuous reader: Pipe opened, discarding data...", file=sys.stderr)
+                        while self.reader_running:
+                            # Read and discard data - just keep pipe open
+                            chunk = pipe.read(CHUNK_SIZE)
+                            if not chunk:
+                                time.sleep(0.01)
+                                continue
+                            # Data discarded - we just keep the pipe alive
+                except (IOError, OSError) as e:
+                    # Pipe error - wait and retry
+                    print(f"Continuous reader: Pipe error, retrying: {e}", file=sys.stderr)
+                    time.sleep(0.5)
+                    continue
+                except Exception as e:
+                    print(f"Continuous reader error: {e}", file=sys.stderr)
+                    time.sleep(1)
+        
+        self.reader_thread = threading.Thread(target=reader_loop, daemon=True)
+        self.reader_thread.start()
+        print(f"Continuous reader thread started (keeps pipe open)", file=sys.stderr)
+    
+    def stop_continuous_reader(self):
+        """Stops the continuous reader thread."""
+        self.reader_running = False
+        if self.reader_thread:
+            self.reader_thread.join(timeout=2)
 
 
 def main():
@@ -355,6 +399,7 @@ def main():
     # Signal handler for clean shutdown
     def signal_handler(sig, frame):
         print("\nStopping server...", file=sys.stderr)
+        server.stop_continuous_reader()
         server.shutdown()
         server.server_close()
     
@@ -366,9 +411,11 @@ def main():
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         print("\nStopping server...", file=sys.stderr)
+        server.stop_continuous_reader()
         server.shutdown()
         server.server_close()
     finally:
+        server.stop_continuous_reader()
         print("Server stopped.", file=sys.stderr)
 
 
